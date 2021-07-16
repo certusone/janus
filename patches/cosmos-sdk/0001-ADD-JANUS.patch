@@ -1,0 +1,141 @@
+From 08ca317c6a059b8ffbdc38e92a1aa3fc5bba81b5 Mon Sep 17 00:00:00 2001
+From: Hendrik Hofstadt <hendrik@nexantic.com>
+Date: Wed, 23 Sep 2020 17:47:52 +0200
+Subject: [PATCH 1/2] ADD JANUS
+Company: nexantic GmbH
+
+---
+ server/start.go | 88 ++++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 87 insertions(+), 1 deletion(-)
+
+diff --git a/server/start.go b/server/start.go
+index 0763996d89..d6ba82a138 100644
+--- a/server/start.go
++++ b/server/start.go
+@@ -4,8 +4,12 @@ package server
+
+ import (
+ 	"fmt"
++	"github.com/pkg/errors"
++	"github.com/tendermint/tendermint/libs/log"
++	types2 "github.com/tendermint/tendermint/types"
+ 	"os"
+ 	"runtime/pprof"
++	"strings"
+ 	"time"
+
+ 	"github.com/spf13/cobra"
+@@ -26,6 +30,8 @@ import (
+ 	servergrpc "github.com/cosmos/cosmos-sdk/server/grpc"
+ 	"github.com/cosmos/cosmos-sdk/server/types"
+ 	storetypes "github.com/cosmos/cosmos-sdk/store/types"
++
++	"github.com/certusone/janus"
+ )
+
+ // Tendermint full-node start flags
+@@ -49,6 +55,17 @@ const (
+ 	FlagPruningInterval   = "pruning-interval"
+ 	FlagIndexEvents       = "index-events"
+ 	FlagMinRetainBlocks   = "min-retain-blocks"
++
++	// JANUS specific
++	envJanusActive        = "JANUS_ACTIVE"
++	envJanusEtcdEndpoints = "JANUS_ETCD_ENDPOINTS"
++	envJanusTimeout       = "JANUS_TIMEOUT"
++	// KMS specific
++	envKMSAddr = "KMS_ADDR"
++	// Signing method
++	envSigningMethod = "SIGNING_METHOD"
++	SigningMethodPV  = "PV"
++	SigningMethodKMS = "KMS"
+ )
+
+ // GRPC-related flags.
+@@ -241,9 +258,61 @@ func startInProcess(ctx *Context, clientCtx client.Context, appCreator types.App
+ 	}
+
+ 	genDocProvider := node.DefaultGenesisDocProviderFunc(cfg)
++
++	var (
++		validator, innerValidator types2.PrivValidator
++	)
++
++	if cfg.PrivValidatorListenAddr != "" {
++		return fmt.Errorf("please unset priv_validator_laddr in the config or arguments - this will overwrite JANUS and cause double-signing")
++	}
++
++	if os.Getenv(envJanusActive) != "TRUE" && os.Getenv(envJanusActive) != "FALSE" {
++		return fmt.Errorf("please set %s", envJanusActive)
++	}
++
++	if os.Getenv(envSigningMethod) == SigningMethodKMS {
++		if os.Getenv(envKMSAddr) == "" {
++			return fmt.Errorf("no KMS address specified. Please set %s", envKMSAddr)
++		}
++		innerValidator, err = createAndStartPrivValidatorSocketClient(os.Getenv(envKMSAddr), ctx.Logger, cfg.ChainID())
++		if err != nil {
++			return err
++		}
++	} else if os.Getenv(envSigningMethod) == SigningMethodPV {
++		innerValidator = pvm.LoadOrGenFilePV(cfg.PrivValidatorKeyFile(), cfg.PrivValidatorStateFile())
++	} else {
++		return fmt.Errorf("no valid signing method specified. Please set %s to AIAKOS/KMS/PV", envSigningMethod)
++	}
++
++	if os.Getenv(envJanusActive) == "TRUE" {
++		// Check and parse etcd endpoints from env
++		if os.Getenv(envJanusEtcdEndpoints) == "" {
++			return fmt.Errorf("no janus etcd endpoints specified. Please set %s", envJanusEtcdEndpoints)
++		}
++
++		etcdEndpoints := strings.Split(os.Getenv(envJanusEtcdEndpoints), ",")
++		if os.Getenv(envJanusTimeout) == "" {
++			return fmt.Errorf("no janus lock timeout specified. Please set %s", envJanusTimeout)
++		}
++		janusTimeout, err := time.ParseDuration(os.Getenv(envJanusTimeout))
++		if err != nil {
++			return fmt.Errorf("invalid janus timeout: %v", err)
++		}
++		// Initialize Janus
++		pv := janus.NewEtcdSigningWrapper(ctx.Logger.With("module", "janus"), innerValidator, janusTimeout, cfg.Moniker, etcdEndpoints)
++		err = pv.Start()
++		if err != nil {
++			return err
++		}
++		validator = pv
++	} else {
++		validator = innerValidator
++	}
++
+ 	tmNode, err := node.NewNode(
+ 		cfg,
+-		pvm.LoadOrGenFilePV(cfg.PrivValidatorKeyFile(), cfg.PrivValidatorStateFile()),
++		validator,
+ 		nodeKey,
+ 		proxy.NewLocalClientCreator(app),
+ 		genDocProvider,
+@@ -333,3 +402,20 @@ func startInProcess(ctx *Context, clientCtx client.Context, appCreator types.App
+ 	// Wait for SIGINT or SIGTERM signal
+ 	return WaitForQuitSignals()
+ }
++
++// Copied from Tendermint
++func createAndStartPrivValidatorSocketClient(
++	listenAddr string,
++	logger log.Logger,
++	chainID string,
++) (types2.PrivValidator, error) {
++	pve, err := pvm.NewSignerListener(listenAddr, logger)
++	if err != nil {
++		return nil, errors.Wrap(err, "failed to start private validator")
++	}
++	pvsc, err := pvm.NewSignerClient(pve, chainID)
++	if err != nil {
++		return nil, errors.Wrap(err, "failed to start private validator")
++	}
++	return pvsc, nil
++}
+--
+2.31.1
+

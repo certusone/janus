@@ -1,0 +1,25 @@
+From 4571177bfca578a570ad7b60aff66087ada40131 Mon Sep 17 00:00:00 2001
+From: Hendrik Hofstadt <hendrik@nexantic.com>
+Date: Mon, 12 Jul 2021 12:37:38 +0200
+Subject: [PATCH 2/2] update go mod
+Company: nexantic GmbH
+
+---
+ go.mod | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/go.mod b/go.mod
+index 95d4e94ed1..182076b160 100644
+--- a/go.mod
++++ b/go.mod
+@@ -57,6 +57,7 @@ require (
+ 	google.golang.org/protobuf v1.26.0
+ 	gopkg.in/ini.v1 v1.61.0 // indirect
+ 	gopkg.in/yaml.v2 v2.4.0
++	github.com/certusone/janus v0.37.9-janus-1.0.20200923163128-71f345a4cb07
+ )
+
+ replace google.golang.org/grpc => google.golang.org/grpc v1.33.2
+--
+2.31.1
+
